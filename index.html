@@ -68,14 +68,17 @@
       </div>
     </div>
     <div id="touch" hidden>
-      <div id="stick"><span></span></div>
-      <div id="look-pad"></div>
+      <div id="stick" role="group" aria-label="Movement joystick">
+        <span></span>
+      </div>
+      <div id="look-pad" role="group" aria-label="Drag to look"></div>
       <div class="touch-actions">
-        <button data-action="KeyE">Use</button
+        <button data-action="KeyE" aria-label="Interact">Use</button
         ><button data-action="KeyF">Light</button
-        ><button data-hold="Space">Hush</button
-        ><button data-hold="ShiftLeft">Run</button
-        ><button data-action="KeyQ">Throw</button>
+        ><button data-hold="Space" aria-label="Hold breath">Hush</button
+        ><button data-hold="ShiftLeft" aria-label="Hold to run">Run</button
+        ><button data-action="KeyQ">Throw</button
+        ><button data-action="KeyC" aria-pressed="false">Crouch</button>
       </div>
     </div>
     <div id="modal" class="modal" hidden>

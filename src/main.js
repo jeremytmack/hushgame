@@ -14,7 +14,8 @@ import {
 const $ = (id) => document.getElementById(id),
   audio = new HouseAudio(),
   keys = new Set(),
-  touch = matchMedia("(pointer:coarse)").matches;
+  touch = matchMedia("(any-pointer:coarse)").matches;
+document.body.classList.toggle("touch-device", touch);
 let world = null,
   state = null,
   modal = false,
@@ -30,7 +31,29 @@ let world = null,
   enemyStep = 0,
   currentTarget = null,
   moveStick = { x: 0, y: 0 },
-  lastFrame = 0;
+  lastFrame = 0,
+  renderDirty = true,
+  quality = "auto",
+  fps = 60,
+  sampleTime = 0,
+  sampleFrames = 0,
+  scaleTimer = 0,
+  hudTimer = 0;
+const renderStats = document.createElement("div");
+renderStats.id = "render-stats";
+renderStats.hidden = true;
+document.body.append(renderStats);
+const cameraTarget = new T.Vector3();
+function applyQuality() {
+  if (!world) return;
+  world.renderer.setPixelRatio(
+    quality === "performance"
+      ? 0.8
+      : Math.min(devicePixelRatio, quality === "high" ? 1.5 : 1.15),
+  );
+  renderDirty = true;
+  scaleTimer = 0;
+}
 
 function say(text, seconds = 6, voice = false) {
   $("subtitle").textContent = text;
@@ -38,9 +61,10 @@ function say(text, seconds = 6, voice = false) {
   if (voice) audio.whisper(text);
 }
 function showModal(kicker, title, body, actions) {
+  renderDirty = true;
   modal = true;
   keys.clear();
-  moveStick = { x: 0, y: 0 };
+  resetTouchControls();
   document.exitPointerLock?.();
   audio.pause();
   $("dialog-kicker").textContent = kicker;
@@ -76,9 +100,13 @@ function settings(back) {
   showModal(
     "MAKE YOURSELF COMFORTABLE",
     "Before the lights go out.",
-    `<label class="setting">Brightness<input id="brightness" aria-label="Brightness" type="range" min="0.7" max="2.8" step="0.05" value="${brightness}"></label><label class="setting">Look sensitivity<input id="sensitivity" aria-label="Look sensitivity" type="range" min="0.0007" max="0.005" step="0.0001" value="${sensitivity}"></label><label class="setting">Sound<input id="volume" aria-label="Sound volume" type="range" min="0" max="1" step="0.05" value="${audio.volume}"></label><label class="setting">Spoken whispers (browser voice)<input id="voices" type="checkbox" ${audio.voices ? "checked" : ""}></label><label class="setting">Reduce camera motion & flicker<input id="reduced" type="checkbox" ${reduced ? "checked" : ""}></label><div class="controls"><span><b>W A S D</b> Move</span><span><b>MOUSE / ARROWS</b> Look</span><span><b>E</b> Interact / leave hiding</span><span><b>F</b> Flashlight</span><span><b>SHIFT</b> Run (makes noise)</span><span><b>C</b> Crouch (quiet)</span><span><b>SPACE</b> Hold your breath</span><span><b>Q</b> Throw a distraction</span><span><b>J / M</b> Memories & floor plan</span><span><b>ESC / P</b> Pause</span></div><p>On touchscreens: left thumb to move, drag the right side to look. The game pauses when you read or open a menu.</p>`,
+    `<label class="setting">Rendering<select id="quality" aria-label="Rendering quality"><option value="auto" ${quality === "auto" ? "selected" : ""}>Auto (adaptive)</option><option value="performance" ${quality === "performance" ? "selected" : ""}>Performance</option><option value="high" ${quality === "high" ? "selected" : ""}>High</option></select></label><p class="mono">F3 toggles live FPS and resolution.</p><label class="setting">Brightness<input id="brightness" aria-label="Brightness" type="range" min="0.7" max="2.8" step="0.05" value="${brightness}"></label><label class="setting">Look sensitivity<input id="sensitivity" aria-label="Look sensitivity" type="range" min="0.0007" max="0.005" step="0.0001" value="${sensitivity}"></label><label class="setting">Sound<input id="volume" aria-label="Sound volume" type="range" min="0" max="1" step="0.05" value="${audio.volume}"></label><label class="setting">Spoken whispers (browser voice)<input id="voices" type="checkbox" ${audio.voices ? "checked" : ""}></label><label class="setting">Reduce camera motion & flicker<input id="reduced" type="checkbox" ${reduced ? "checked" : ""}></label><div class="controls"><span><b>W A S D</b> Move</span><span><b>MOUSE / ARROWS</b> Look</span><span><b>E</b> Interact / leave hiding</span><span><b>F</b> Flashlight</span><span><b>SHIFT</b> Run (makes noise)</span><span><b>C</b> Crouch (quiet)</span><span><b>SPACE</b> Hold your breath</span><span><b>Q</b> Throw a distraction</span><span><b>J / M</b> Memories & floor plan</span><span><b>ESC / P</b> Pause</span></div><p>On touchscreens: left thumb to move, drag the right side to look. Hold Hush to cover your mouth and Run to sprint; tap Crouch to toggle it. The game pauses when you read or open a menu.</p>`,
     [["Back", back]],
   );
+  $("quality").onchange = (e) => {
+    quality = e.target.value;
+    applyQuality();
+  };
   $("brightness").oninput = (e) => {
     brightness = +e.target.value;
     if (world) world.renderer.toneMappingExposure = brightness;
@@ -100,15 +128,17 @@ $("start").onclick = async () => {
     audio.init();
     if (!world) world = await createWorld($("world"));
     world.renderer.toneMappingExposure = brightness;
+    applyQuality();
     reset();
     $("menu").hidden = true;
     $("hud").hidden = false;
+    if (touch) $("journal-button").textContent = "Memories / map";
     $("touch").hidden = !touch;
     started = true;
     showModal(
       "2:17 AM · ONE UNREAD MESSAGE",
       "Don’t answer her.",
-      `<p>You wake up in your childhood home. It has been abandoned for twenty years.</p><p>Upstairs, your mother calls your childhood nickname.</p><p><em>She has been dead for eighteen years.</em></p><p>Your phone lights up:</p><p class="note">DON’T ANSWER HER. SHE DOESN’T KNOW WHERE YOU ARE YET.</p><p>Recover five memories, find your sister, and reach the front door. When the house says “Ready or not”, you have thirty seconds to hide. <em>Change hiding places. It learns.</em></p>`,
+      `<p>You wake up in your childhood home. It has been abandoned for twenty years.</p><p>Upstairs, your mother calls your childhood nickname.</p><p><em>She has been dead for eighteen years.</em></p><p>Your phone lights up:</p><p class="note">DON’T ANSWER HER. SHE DOESN’T KNOW WHERE YOU ARE YET.</p><p>${touch ? "Use the left thumbstick to move and drag the right side to look. Tap Use to interact; hold Hush to cover your mouth.<br><br>" : ""}Recover five memories, find your sister, and reach the front door. When the house says “Ready or not”, you have thirty seconds to hide. <em>Change hiding places. It learns.</em></p>`,
       [
         [
           "Put the phone away",
@@ -141,6 +171,8 @@ $("start").onclick = async () => {
 };
 function reset() {
   state = {
+    vx: 0,
+    vz: 0,
     x: 9 * SIZE,
     z: 15.6 * SIZE,
     floor: 0,
@@ -174,6 +206,15 @@ function reset() {
   };
   yaw = 0;
   pitch = 0;
+  world.camera.position.set(state.x, 1.65, state.z);
+  world.camera.rotation.set(0, 0, 0);
+  renderDirty = true;
+  hudTimer = 0;
+  delete document.body.dataset.hiding;
+  resetTouchControls();
+  document
+    .querySelector('[data-action="KeyC"]')
+    .setAttribute("aria-pressed", "false");
   subtitleUntil = 0;
   $("subtitle").textContent = "";
   $("subtitle").style.opacity = 0;
@@ -239,6 +280,10 @@ function journal() {
 }
 $("journal-button").onclick = journal;
 function action(code) {
+  if (code === "F3") {
+    renderStats.hidden = !renderStats.hidden;
+    return;
+  }
   if (!started || state.done) return;
   if (modal) {
     if (code === "Escape" || code === "KeyP") closeModal();
@@ -265,7 +310,12 @@ function action(code) {
       state.uses.dark = (state.uses.dark || 0) + 1;
     audio.tone(220, 0.05, 0.06);
   }
-  if (code === "KeyC") state.crouch = !state.crouch;
+  if (code === "KeyC") {
+    state.crouch = !state.crouch;
+    document
+      .querySelector('[data-action="KeyC"]')
+      .setAttribute("aria-pressed", String(state.crouch));
+  }
   if (code === "KeyE") interact();
   if (code === "KeyQ") {
     if (state.throws <= 0) {
@@ -362,7 +412,10 @@ function nearest() {
 }
 function interact() {
   if (state.hidden) {
+    yaw = state.hidden.returnLook?.yaw ?? yaw;
+    pitch = state.hidden.returnLook?.pitch ?? 0;
     state.hidden = null;
+    delete document.body.dataset.hiding;
     document.body.classList.remove("hidden-view");
     say("You step back into the house.", 2);
     return;
@@ -371,6 +424,12 @@ function interact() {
   if (!i) return;
   if (i.type === "hide") {
     state.hidden = i;
+    i.returnLook = { yaw, pitch };
+    yaw = i.view.yaw;
+    pitch = 0;
+    state.vx = 0;
+    state.vz = 0;
+    document.body.dataset.hiding = i.kind;
     state.uses[i.kind] = (state.uses[i.kind] || 0) + 1;
     document.body.classList.add("hidden-view");
     audio.tone(80, 0.5, 0.13);
@@ -539,6 +598,7 @@ function finish(kind, title, body) {
           $("menu").hidden = false;
           $("start").disabled = false;
           $("start").textContent = "Enter the house";
+          renderStats.hidden = true;
           audio.pause();
         },
       ],
@@ -639,7 +699,7 @@ function updateEnemy(dt) {
       dx = p.x - e.x,
       dz = p.z - e.z,
       len = Math.hypot(dx, dz),
-      v = (state.hidden ? 1.3 : 1.65) * dt;
+      v = (state.hidden ? 1.5 : 2.8) * dt;
     if (len < v) {
       e.x = p.x;
       e.z = p.z;
@@ -648,7 +708,12 @@ function updateEnemy(dt) {
       e.x += (dx / len) * v;
       e.z += (dz / len) * v;
     }
-    world.seeker.rotation.y = Math.atan2(dx, dz);
+    const angle = Math.atan2(dx, dz),
+      delta = Math.atan2(
+        Math.sin(angle - world.seeker.rotation.y),
+        Math.cos(angle - world.seeker.rotation.y),
+      );
+    world.seeker.rotation.y += delta * (1 - Math.exp(-7 * dt));
     enemyStep += dt;
     if (enemyStep > 0.65) {
       enemyStep = 0;
@@ -674,6 +739,12 @@ function updateEnemy(dt) {
     reduced ? 0 : Math.sin(state.elapsed * 2) * 0.03,
     e.z,
   );
+  world.animateSeeker(state.elapsed, dt, {
+    walking: e.path.length > 0 && e.inspect <= 0,
+    playerX: state.x,
+    playerZ: state.z,
+    reduced,
+  });
   if (!state.hidden && d < 1.05 && los) {
     finish(
       "found",
@@ -757,19 +828,37 @@ function tick(dt) {
       if (state.hidden) state.enemy.pressure += 1.1;
     }
   } else if (!held) state.breath = Math.min(100, state.breath + dt * 13);
+  const speed = (run ? 6.8 : state.crouch ? 1.9 : 4.2) * (held ? 0.65 : 1);
+  dx /= Math.max(1, l);
+  dz /= Math.max(1, l);
+  const desiredX = moving
+    ? (dx * Math.cos(yaw) + dz * Math.sin(yaw)) * speed
+    : 0;
+  const desiredZ = moving
+    ? (-dx * Math.sin(yaw) + dz * Math.cos(yaw)) * speed
+    : 0;
+  state.vx = T.MathUtils.damp(state.vx, desiredX, moving ? 16 : 24, dt);
+  state.vz = T.MathUtils.damp(state.vz, desiredZ, moving ? 16 : 24, dt);
+  if (!state.hidden) {
+    const steps = Math.max(
+      1,
+      Math.ceil((Math.hypot(state.vx, state.vz) * dt) / 0.18),
+    );
+    for (let n = 0; n < steps; n++) {
+      const nx = state.x + (state.vx * dt) / steps,
+        nz = state.z + (state.vz * dt) / steps;
+      if (canMove(nx, state.z)) state.x = nx;
+      else state.vx = 0;
+      if (canMove(state.x, nz)) state.z = nz;
+      else state.vz = 0;
+    }
+  }
   if (moving) {
-    dx /= Math.max(1, l);
-    dz /= Math.max(1, l);
-    const speed = (run ? 4 : state.crouch ? 1.3 : 2.4) * (held ? 0.65 : 1) * dt;
-    const nx = state.x + (dx * Math.cos(yaw) + dz * Math.sin(yaw)) * speed,
-      nz = state.z + (-dx * Math.sin(yaw) + dz * Math.cos(yaw)) * speed;
-    if (canMove(nx, state.z)) state.x = nx;
-    if (canMove(state.x, nz)) state.z = nz;
     state.noise +=
       ((run ? 1 : state.crouch ? 0.04 : 0.2) - state.noise) *
       Math.min(1, dt * 5);
     stepTimer += dt;
-    if (stepTimer > (run ? 0.29 : state.crouch ? 0.8 : 0.51)) {
+    if (stepTimer > (run ? 0.27 : state.crouch ? 0.7 : 0.39)) {
       stepTimer = 0;
       audio.step(false);
     }
@@ -787,16 +876,28 @@ function tick(dt) {
     state.roomVisits[room] = (state.roomVisits[room] || 0) + 1;
     state.lastRoom = room;
   }
-  const height = state.hidden ? 0.75 : state.crouch ? 1.03 : 1.65;
-  world.camera.position.set(
-    state.x,
-    height +
-      (moving && !reduced
-        ? Math.sin(state.elapsed * (run ? 13 : 8)) * 0.035
-        : 0),
-    state.z,
-  );
+  if (state.hidden) {
+    const view = state.hidden.view;
+    const difference = Math.atan2(
+      Math.sin(yaw - view.yaw),
+      Math.cos(yaw - view.yaw),
+    );
+    yaw = view.yaw + T.MathUtils.clamp(difference, -view.limit, view.limit);
+    pitch = T.MathUtils.clamp(pitch, -0.25, 0.28);
+    cameraTarget.set(view.x, view.y, view.z);
+  } else cameraTarget.set(state.x, state.crouch ? 1.03 : 1.65, state.z);
+  // Only height and hiding transitions are eased; walking stays responsive.
+  const blend = 1 - Math.exp(-dt * (state.hidden ? 7 : 18));
+  world.camera.position.lerp(cameraTarget, blend);
+  if (moving && !reduced)
+    world.camera.position.y += Math.sin(state.elapsed * (run ? 12 : 8)) * 0.008;
   world.camera.rotation.set(pitch, yaw, 0);
+  const desiredFov = state.hidden ? 64 : run && moving ? 77 : 72;
+  const fov = T.MathUtils.damp(world.camera.fov, desiredFov, 7, dt);
+  if (Math.abs(world.camera.fov - fov) > 0.005) {
+    world.camera.fov = fov;
+    world.camera.updateProjectionMatrix();
+  }
   world.flashlight.visible = state.light;
   if (state.phase === "search") updateEnemy(dt);
   const flicker =
@@ -812,11 +913,16 @@ function tick(dt) {
         ? 5.5
         : 0.3
       : 5.5;
+  hudTimer -= dt;
+  if (hudTimer > 0) return;
+  hudTimer = 0.085;
   currentTarget = nearest();
   $("prompt").innerHTML = state.hidden
-    ? "<kbd>E</kbd> Leave hiding"
+    ? touch
+      ? "Tap Use to leave hiding"
+      : "<kbd>E</kbd> Leave hiding"
     : currentTarget
-      ? `<kbd>E</kbd> ${currentTarget.name}`
+      ? `${touch ? "Tap Use ·" : "<kbd>E</kbd>"} ${currentTarget.name}`
       : "";
   $("location").textContent = room;
   $("memories").textContent = `MEMORIES  ${state.collected.size} / 5`;
@@ -848,21 +954,59 @@ function tick(dt) {
       ? "YOUR FOOTSTEPS CARRY"
       : "BREATH";
   $("hide-label").textContent = state.hidden
-    ? "HIDDEN · SPACE TO COVER YOUR MOUTH"
+    ? touch
+      ? "HIDDEN · HOLD HUSH TO COVER YOUR MOUTH"
+      : "HIDDEN · SPACE TO COVER YOUR MOUTH"
     : state.crouch
       ? "CROUCHING"
       : "";
-  $("light-label").textContent = `F  LIGHT ${state.light ? "ON" : "OFF"}`;
+  document
+    .querySelector('[data-action="KeyF"]')
+    .setAttribute("aria-pressed", String(state.light));
+  $("light-label").textContent =
+    `${touch ? "" : "F  "}LIGHT ${state.light ? "ON" : "OFF"}`;
   $("subtitle").style.opacity = state.elapsed < subtitleUntil ? 1 : 0;
 }
 function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min((now - previous) / 1000, 0.05);
+  const elapsed = (now - previous) / 1000;
   previous = now;
-  if (!world || !started) return;
-  if (!modal && !state.done) tick(dt);
-  if (now - lastFrame > 16) {
+  if (!world || !started || document.hidden) return;
+  if (!modal && !state.done) {
+    // Consume long frames in bounded steps rather than slowing the game clock and movement.
+    let remaining = Math.min(elapsed, 0.2);
+    while (remaining > 0 && !modal && !state.done) {
+      const step = Math.min(remaining, 1 / 60);
+      tick(step);
+      remaining -= step;
+    }
+    renderDirty = true;
+    sampleTime += elapsed;
+    sampleFrames++;
+    scaleTimer += elapsed;
+    if (sampleTime >= 1) {
+      fps = sampleFrames / sampleTime;
+      sampleTime = 0;
+      sampleFrames = 0;
+      if (quality === "auto" && scaleTimer > 3) {
+        const current = world.renderer.getPixelRatio(),
+          cap = Math.min(devicePixelRatio, 1.15);
+        let next = current;
+        if (fps < 48) next = Math.max(0.65, current - 0.15);
+        else if (fps > 58 && scaleTimer > 9)
+          next = Math.min(cap, current + 0.1);
+        if (next !== current) {
+          world.renderer.setPixelRatio(next);
+          scaleTimer = 0;
+        }
+      }
+      renderStats.textContent = `${Math.round(fps)} FPS · ${Math.round(1000 / fps)} ms · ${world.renderer.getPixelRatio().toFixed(2)}× · 3 lights`;
+    }
+  }
+  if (renderDirty) {
+    world.updateEnvironment(state.floor, Math.min(elapsed, 0.05));
     world.renderer.render(world.scene, world.camera);
+    renderDirty = false;
     lastFrame = now;
   }
 }
@@ -872,56 +1016,109 @@ window.addEventListener("resize", () => {
   world.camera.aspect = innerWidth / innerHeight;
   world.camera.updateProjectionMatrix();
   world.renderer.setSize(innerWidth, innerHeight);
+  renderDirty = true;
 });
-// Touch controls use pointer capture, including cancellation so controls cannot stick.
-let stickId = null;
+// Independent captured pointers permit moving, looking and holding an action together.
+let stickId = null,
+  look = null;
 const stick = $("stick"),
-  knob = stick.querySelector("span");
-stick.onpointerdown = (e) => {
-  stickId = e.pointerId;
-  stick.setPointerCapture(e.pointerId);
-};
-stick.onpointermove = (e) => {
-  if (e.pointerId !== stickId) return;
+  knob = stick.querySelector("span"),
+  pad = $("look-pad");
+const holds = new Map();
+function stickMove(e) {
   const r = stick.getBoundingClientRect(),
-    x = Math.max(-40, Math.min(40, e.clientX - r.left - 55)),
-    y = Math.max(-40, Math.min(40, e.clientY - r.top - 55));
-  moveStick = { x: x / 40, y: y / 40 };
+    radius = r.width * 0.36;
+  const dx = e.clientX - r.left - r.width / 2,
+    dy = e.clientY - r.top - r.height / 2;
+  const distance = Math.hypot(dx, dy),
+    scale = distance > radius ? radius / distance : 1;
+  const x = dx * scale,
+    y = dy * scale;
+  moveStick =
+    distance < radius * 0.12
+      ? { x: 0, y: 0 }
+      : { x: x / radius, y: y / radius };
   knob.style.transform = `translate(${x}px,${y}px)`;
-};
-const stopStick = () => {
+}
+function stopStick() {
   stickId = null;
   moveStick = { x: 0, y: 0 };
   knob.style.transform = "";
+}
+function resetTouchControls() {
+  stopStick();
+  look = null;
+  for (const [id, { button, code }] of holds) {
+    keys.delete(code);
+    button.classList.remove("held");
+  }
+  holds.clear();
+}
+stick.onpointerdown = (e) => {
+  if (modal || stickId !== null) return;
+  e.preventDefault();
+  stickId = e.pointerId;
+  stick.setPointerCapture(e.pointerId);
+  stickMove(e);
 };
-stick.onpointerup = stopStick;
-stick.onpointercancel = stopStick;
-let look = null;
-const pad = $("look-pad");
+stick.onpointermove = (e) => {
+  if (e.pointerId === stickId && !modal) stickMove(e);
+};
+for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
+  stick.addEventListener(event, (e) => {
+    if (e.pointerId === stickId) stopStick();
+  });
 pad.onpointerdown = (e) => {
+  if (modal || look) return;
+  e.preventDefault();
   look = { id: e.pointerId, x: e.clientX, y: e.clientY };
   pad.setPointerCapture(e.pointerId);
 };
 pad.onpointermove = (e) => {
-  if (!look || look.id !== e.pointerId || modal) return;
+  if (!look || e.pointerId !== look.id || modal) return;
   yaw -= (e.clientX - look.x) * sensitivity * 1.6;
-  pitch = Math.max(
+  pitch = T.MathUtils.clamp(
+    pitch - (e.clientY - look.y) * sensitivity * 1.6,
     -1.25,
-    Math.min(1.25, pitch - (e.clientY - look.y) * sensitivity * 1.6),
+    1.25,
   );
   look.x = e.clientX;
   look.y = e.clientY;
 };
-pad.onpointerup = pad.onpointercancel = () => (look = null);
-for (const b of document.querySelectorAll("[data-action]"))
-  b.onclick = () => action(b.dataset.action);
-for (const b of document.querySelectorAll("[data-hold]")) {
-  b.onpointerdown = (e) => {
-    keys.add(b.dataset.hold);
-    b.setPointerCapture(e.pointerId);
+for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
+  pad.addEventListener(event, (e) => {
+    if (e.pointerId === look?.id) look = null;
+  });
+for (const button of document.querySelectorAll("[data-action]"))
+  button.onclick = () => {
+    if (!modal) action(button.dataset.action);
   };
-  b.onpointerup = b.onpointercancel = () => keys.delete(b.dataset.hold);
+for (const button of document.querySelectorAll("[data-hold]")) {
+  button.onpointerdown = (e) => {
+    if (modal) return;
+    e.preventDefault();
+    button.setPointerCapture(e.pointerId);
+    const code = button.dataset.hold;
+    holds.set(e.pointerId, { button, code });
+    keys.add(code);
+    button.classList.add("held");
+  };
+  const release = (e) => {
+    const hold = holds.get(e.pointerId);
+    if (!hold) return;
+    holds.delete(e.pointerId);
+    if (![...holds.values()].some((h) => h.code === hold.code))
+      keys.delete(hold.code);
+    hold.button.classList.remove("held");
+  };
+  for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
+    button.addEventListener(event, release);
 }
+window.addEventListener("blur", resetTouchControls);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) resetTouchControls();
+});
+window.addEventListener("resize", resetTouchControls);
 // Read-only snapshot for diagnostics, useful for automated integration verification.
 window.hushSnapshot = () =>
   state
@@ -938,5 +1135,14 @@ window.hushSnapshot = () =>
         paused: modal,
         done: state.done,
         drawCalls: world.renderer.info.render.calls,
+        triangles: world.renderer.info.render.triangles,
+        fps,
+        renderScale: world.renderer.getPixelRatio(),
+        camera: world.camera.position.toArray(),
+        lights: 3,
+        crouching: state.crouch,
+        look: [yaw, pitch],
+        touchControls: touch,
+        distractions: state.throws,
       }
     : null;
