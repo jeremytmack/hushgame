@@ -2,6 +2,7 @@ import "./style.css";
 import * as T from "three";
 import { createWorld } from "./world.js";
 import { HouseAudio } from "./audio.js";
+import { createTitleMusic } from "./title-music.js";
 import {
   SIZE,
   OFFSET,
@@ -15,6 +16,7 @@ const $ = (id) => document.getElementById(id),
   audio = new HouseAudio(),
   keys = new Set(),
   touch = matchMedia("(any-pointer:coarse)").matches;
+const titleMusic = createTitleMusic($("title-music"), audio.volume);
 document.body.classList.toggle("touch-device", touch);
 let world = null,
   state = null,
@@ -112,7 +114,10 @@ function settings(back) {
     if (world) world.renderer.toneMappingExposure = brightness;
   };
   $("sensitivity").oninput = (e) => (sensitivity = +e.target.value);
-  $("volume").oninput = (e) => audio.setVolume(+e.target.value);
+  $("volume").oninput = (e) => {
+    audio.setVolume(+e.target.value);
+    titleMusic.setVolume(+e.target.value);
+  };
   $("voices").onchange = (e) => (audio.voices = e.target.checked);
   $("reduced").onchange = (e) => (reduced = e.target.checked);
 }
@@ -122,6 +127,7 @@ $("menu-settings").onclick = () =>
     $("modal").hidden = true;
   });
 $("start").onclick = async () => {
+  titleMusic.setActive(false);
   $("start").disabled = true;
   $("start").textContent = "Opening the door…";
   try {
@@ -151,6 +157,7 @@ $("start").onclick = async () => {
     );
   } catch (e) {
     console.error(e);
+    titleMusic.setActive(true);
     $("start").disabled = false;
     $("start").textContent = "Try again";
     showModal(
@@ -596,6 +603,7 @@ function finish(kind, title, body) {
           $("hud").hidden = true;
           $("touch").hidden = true;
           $("menu").hidden = false;
+          titleMusic.setActive(true);
           $("start").disabled = false;
           $("start").textContent = "Enter the house";
           renderStats.hidden = true;

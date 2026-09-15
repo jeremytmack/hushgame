@@ -44,7 +44,7 @@ Find all memories to reveal the real sister in the upstairs nursery. Bring her t
 
 ## Scope
 
-This is a compact playable adaptation, not the hours-long production described in the pitch. The house and characters are stylized real-time 3D geometry with generated material textures; the menu uses cinematic generated artwork. Stair travel and the finale use interactions rather than animated cutscenes. Audio is synthesized locally. Progress lasts for the current session; there is no save system.
+This is a compact playable adaptation, not the hours-long production described in the pitch. The house and characters are stylized real-time 3D geometry with generated material textures; the menu uses cinematic generated artwork. Stair travel and the finale use interactions rather than animated cutscenes. Gameplay audio is synthesized locally. The title screen loops the supplied “The Drowning Credits” track, with a play/pause control and shared Sound volume setting. Where audible autoplay is blocked, use Play title music or interact with the menu. Music stops when entering the house and resumes on return to the title; background tabs pause playback. Progress lasts for the current session; there is no save system.
 
 ## Structure
 
