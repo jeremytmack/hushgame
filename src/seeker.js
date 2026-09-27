@@ -1,154 +1,165 @@
 import * as T from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { clone } from "three/addons/utils/SkeletonUtils.js";
+import { seekerGesture, seekerThreat } from "./seeker-motion.js";
 
-// Hierarchical joints let the head keep its gaze while the body walks away.
-export function createSeeker(faceTexture, clothTexture) {
-  const root = new T.Group(),
-    torso = new T.Group();
-  root.add(torso);
-  const skinTexture = faceTexture.clone();
-  skinTexture.repeat.set(0.16, 0.13);
-  skinTexture.offset.set(0.4, 0.82);
-  skinTexture.needsUpdate = true;
-  const skin = new T.MeshLambertMaterial({ color: 0x878477, map: skinTexture });
-  const cloth = new T.MeshLambertMaterial({
-    color: 0x32362d,
-    map: clothTexture,
-    side: T.DoubleSide,
-  });
-  const black = new T.MeshLambertMaterial({ color: 0x080b0a });
-  function ellipsoid(parent, material, x, y, z, sx, sy, sz) {
-    const m = new T.Mesh(new T.SphereGeometry(1, 12, 10), material);
-    m.position.set(x, y, z);
-    m.scale.set(sx, sy, sz);
-    parent.add(m);
-    return m;
-  }
-  torso.position.y = 1.38;
-  ellipsoid(torso, cloth, 0, 0.36, 0, 0.29, 0.68, 0.17);
-  ellipsoid(torso, cloth, 0, 0.77, 0, 0.43, 0.12, 0.16);
-  // A fluted, ragged hem instead of a solid triangular robe.
-  const dressGeo = new T.CylinderGeometry(0.24, 0.46, 1.12, 13, 4, true);
-  const p = dressGeo.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const y = p.getY(i);
-    p.setY(i, y + (y < -0.45 ? Math.sin(i * 3.7) * 0.11 : 0));
-    p.setZ(i, p.getZ(i) * 0.6);
-  }
-  dressGeo.computeVertexNormals();
-  const dress = new T.Mesh(dressGeo, cloth);
-  dress.position.y = -0.1;
-  torso.add(dress);
-  const neck = ellipsoid(torso, skin, 0, 0.99, 0.06, 0.085, 0.27, 0.085);
-  const head = new T.Group();
-  head.position.set(0.045, 1.25, 0.14);
-  torso.add(head);
-  ellipsoid(head, skin, 0, 0, 0, 0.19, 0.29, 0.17);
-  // Curved textured face: its silhouette is genuinely dimensional from oblique views.
-  const faceGeo = new T.SphereGeometry(1, 24, 20, 0, Math.PI, 0, Math.PI);
-  const faceUV = faceGeo.attributes.uv,
-    facePos = faceGeo.attributes.position;
-  for (let i = 0; i < faceUV.count; i++)
-    faceUV.setXY(i, 0.5 + facePos.getX(i) * 0.49, 0.5 + facePos.getY(i) * 0.49);
-  const hairMaterial = new T.MeshLambertMaterial({ color: 0x25231b });
-  for (let n = 0; n < 13; n++) {
-    const a = (n / 13) * Math.PI * 2,
-      px = Math.sin(a) * 0.17,
-      pz = Math.cos(a) * 0.12;
-    const curve = new T.CatmullRomCurve3([
-      new T.Vector3(px, 0.21, pz),
-      new T.Vector3(px * 1.22, -0.04, pz * 1.2 - 0.03),
-      new T.Vector3(px * 1.4, -0.4 - (n % 3) * 0.1, pz * 0.8 - 0.08),
-    ]);
-    head.add(
-      new T.Mesh(new T.TubeGeometry(curve, 6, 0.004, 3, false), hairMaterial),
-    );
-  }
-  const faceMat = new T.MeshLambertMaterial({
-    map: faceTexture,
-    color: 0xd3ccbb,
-    side: T.DoubleSide,
-  });
-  const face = new T.Mesh(faceGeo, faceMat);
-  face.scale.set(0.214, 0.29, 0.183);
-  head.add(face);
-  const limbs = [],
-    fingers = [];
-  for (const side of [-1, 1]) {
-    const shoulder = new T.Group();
-    shoulder.position.set(side * 0.35, 0.76 + side * 0.07, -0.035);
-    torso.add(shoulder);
-    ellipsoid(shoulder, skin, 0, -0.36, 0, 0.062, 0.42, 0.065);
-    const elbow = new T.Group();
-    elbow.position.y = -0.75;
-    shoulder.add(elbow);
-    ellipsoid(elbow, skin, 0, -0.4, 0, 0.045, 0.46, 0.043);
-    const hand = ellipsoid(elbow, skin, 0, -0.88, 0.025, 0.072, 0.13, 0.035);
-    for (let n = 0; n < 4; n++) {
-      const finger = new T.Group();
-      finger.position.set((n - 1.5) * 0.034, -0.96, 0.025);
-      elbow.add(finger);
-      ellipsoid(finger, skin, 0, -0.12, 0, 0.013, 0.17, 0.014);
-      fingers.push(finger);
+export async function loadSeekerAsset() {
+  const asset = await new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}models/seeker.glb`);
+  for (const name of ["SeekerStill", "SeekerWalk"])
+    if (!asset.animations.some((clip) => clip.name === name))
+      throw new Error("Seeker model is missing its " + name + " animation");
+  asset.animations.forEach((clip) => clip.optimize());
+  return asset;
+}
+
+/** A continuously skinned human silhouette, with the gaze independent of gait. */
+export function createSeeker(asset) {
+  const root = new T.Group();
+  root.name = "TheSeeker";
+  const model = clone(asset.scene);
+  root.add(model);
+  const bounds = new T.Box3().setFromObject(model);
+  model.scale.setScalar(2.72 / (bounds.max.y - bounds.min.y));
+  model.position.y = -bounds.min.y * model.scale.y;
+  model.traverse((object) => {
+    if (!object.isMesh) return;
+    // The animated pose can extend beyond the rest-pose bounds.
+    object.frustumCulled = false;
+    object.material = object.material.clone();
+    const material = object.material;
+    if (material.name === "SeekerSkin") material.color.set(0xb4bec0);
+    if (material.name === "SeekerEyes") {
+      material.map = null;
+      material.color.set(0x050708);
+      material.roughness = 0.22;
     }
-    const hip = new T.Group();
-    hip.position.set(side * 0.15, 1.02, 0);
-    root.add(hip);
-    ellipsoid(hip, black, 0, -0.23, 0, 0.083, 0.32, 0.065);
-    const knee = new T.Group();
-    knee.position.y = -0.48;
-    hip.add(knee);
-    ellipsoid(knee, skin, 0, -0.23, 0, 0.047, 0.29, 0.044);
-    ellipsoid(knee, black, 0, -0.48, 0.07, 0.07, 0.045, 0.16);
-    limbs.push({ side, shoulder, elbow, hip, knee, hand });
+    if (material.name === "SeekerTeeth") material.color.set(0x918872);
+    if (material.name === "SeekerHair") material.color.set(0x252b27);
+    if (material.name === "SeekerDress") material.color.set(0x333b35);
+    if (["SeekerHair", "Brows", "Lashes", "SeekerEyes"].includes(material.name)) {
+      material.transparent = false;
+      material.alphaTest = material.name === "SeekerEyes" ? 0.05 : 0.38;
+      material.side = T.DoubleSide;
+      material.depthWrite = true;
+    }
+    if (material.map) material.map.anisotropy = 4;
+    // Preserve skin detail at flashlight distance, matching the child material.
+    material.onBeforeCompile = (shader) => {
+      if (material.name === "SeekerSkin") {
+        shader.fragmentShader = shader.fragmentShader.replace(
+          "#include <map_fragment>",
+          `#include <map_fragment>
+          diffuseColor.rgb = mix(vec3(dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722))), diffuseColor.rgb, 0.12);`,
+        );
+      }
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <lights_pars_begin>",
+        T.ShaderChunk.lights_pars_begin.replace(
+          "pow( lightDistance, decayExponent )",
+          "pow( max( lightDistance, 2.5 ), decayExponent )",
+        ),
+      );
+    };
+    material.customProgramCacheKey = () => `seeker-near-light-v2-${material.name}`;
+  });
+  const mixer = new T.AnimationMixer(model);
+  const still = mixer.clipAction(asset.animations.find((c) => c.name === "SeekerStill"));
+  const walk = mixer.clipAction(asset.animations.find((c) => c.name === "SeekerWalk"));
+  still.play();
+  walk.play();
+  walk.setEffectiveWeight(0);
+  const head = model.getObjectByName("head");
+  const neck = model.getObjectByName("neck01");
+  const spine = model.getObjectByName("spine02");
+  const jaw = model.getObjectByName("jaw");
+  const jawRestScale = jaw?.scale.clone();
+  const shoulders = [model.getObjectByName("shoulder01L"), model.getObjectByName("shoulder01R")];
+  const bones = [];
+  model.traverse((object) => { if (object.isBone) bones.push(object); });
+  const clipPose = new Map(bones.map((bone) => [bone, bone.quaternion.clone()]));
+  const localPlayer = new T.Vector3();
+  const rotation = new T.Quaternion();
+  const euler = new T.Euler();
+  let turn = 0, nod = 0, tilt = 0.08, weight = 0;
+  let sampledTurn = 0, nextLook = 0;
+  let lastTime = -1, scream = 0, bodyTurn = 0;
+
+  function addRotation(bone, x, y, z) {
+    if (!bone) return;
+    euler.set(x, y, z, "YXZ");
+    rotation.setFromEuler(euler);
+    bone.quaternion.multiply(rotation);
+  }
+
+  function animate(time, dt, { walking, speed = walking ? 2.8 : 0,
+    playerX, playerZ, playerY = 1.65, reduced = false, aware = true, distance: suppliedDistance }) {
+    if (time < lastTime) {
+      turn = nod = sampledTurn = scream = bodyTurn = 0;
+      nextLook = time;
+      mixer.setTime(0);
+    }
+    lastTime = time;
+    const step = Math.max(0, Math.min(dt, 0.1));
+    weight = T.MathUtils.damp(weight, walking ? 1 : 0, 6, step);
+    walk.setEffectiveWeight(weight);
+    still.setEffectiveWeight(1 - weight);
+    // Distance, rather than a free-running sine wave, drives the planted gait.
+    walk.setEffectiveTimeScale(walking ? Math.max(0, speed) / 0.8 : 0);
+    still.setEffectiveTimeScale(1);
+    // Constant animation tracks may skip writes. Restore the previous clip
+    // pose before mixing, so procedural offsets never accumulate each frame.
+    for (const [bone, pose] of clipPose) bone.quaternion.copy(pose);
+    mixer.update(step);
+    for (const [bone, pose] of clipPose) pose.copy(bone.quaternion);
+    const gesture = seekerGesture(time, reduced);
+    const distance = Number.isFinite(suppliedDistance) ? suppliedDistance :
+      Math.hypot(playerX - root.position.x, playerZ - root.position.z);
+    scream = T.MathUtils.damp(scream, seekerThreat(distance, aware), aware ? 4.5 : 8, step);
+    const mouthOpen = scream * (0.90 + 0.10 * Math.sin(time * 8.5));
+    if (Number.isFinite(playerX) && Number.isFinite(playerZ)) {
+      root.updateMatrixWorld(true);
+      localPlayer.set(playerX, playerY, playerZ);
+      root.worldToLocal(localPlayer);
+      const distance = Math.hypot(localPlayer.x, localPlayer.z);
+      const target = T.MathUtils.clamp(Math.atan2(localPlayer.x, localPlayer.z), -1.05, 1.05);
+      // The eyes/head acquire first. The body follows through navigation later.
+      if (time >= nextLook || reduced) {
+        sampledTurn = target;
+        nextLook = time + 0.10 + 0.055 * Math.sin(time * 0.73);
+      }
+      turn = T.MathUtils.damp(turn, sampledTurn, reduced ? 3 : 9, step);
+      nod = T.MathUtils.damp(nod,
+        -T.MathUtils.clamp(Math.atan2(localPlayer.y - 2.48, Math.max(0.7, distance)), -0.32, 0.6),
+        reduced ? 3 : 6, step);
+    }
+    tilt = T.MathUtils.damp(tilt, gesture.tilt, reduced ? 2 : 13, step);
+    bodyTurn = T.MathUtils.damp(bodyTurn, turn * 0.15, 2.5, step);
+    addRotation(head, nod + gesture.twitch - scream * 0.08, turn - bodyTurn, tilt);
+    if (jaw) {
+      jaw.scale.copy(jawRestScale);
+      jaw.scale.y *= 1 + mouthOpen * 0.28;
+      addRotation(jaw, mouthOpen * 0.82, 0, mouthOpen * 0.025);
+    }
+    addRotation(neck, 0, -turn * 0.12, -tilt * 0.24);
+    const breath = Math.sin(time * (1.7 + scream * 1.8));
+    addRotation(spine, (reduced ? 0.006 : 0.014) * breath - scream * 0.035,
+      bodyTurn, reduced ? 0 : gesture.twitch * 0.2);
+    shoulders.forEach((shoulder, side) => addRotation(shoulder,
+      -scream * 0.12 + breath * 0.012, 0,
+      (side ? -1 : 1) * (scream * 0.04 + Math.sin(time * 1.1 + side) * 0.012)));
+    for (const bone of bones) {
+      if (/^finger[2-5]-[23][_.]?[LR]$/.test(bone.name)) {
+        const delayed = bone.name.endsWith("L") ? gesture.curl : seekerGesture(time - 0.35, reduced).curl;
+        addRotation(bone, delayed * 0.45, 0, 0);
+      }
+      if (/^orbicularis03[_.]?[LR]$/.test(bone.name)) addRotation(bone, -gesture.blink * 0.22, 0, 0);
+      if (/^orbicularis04[_.]?[LR]$/.test(bone.name)) addRotation(bone, gesture.blink * 0.12, 0, 0);
+    }
+    root.userData.animation = {
+      walking, speed, headTurn: turn, tilt, twitch: gesture.twitch, scream, mouthOpen, distance,
+      clip: weight > 0.5 ? "SeekerWalk" : "SeekerStill", time: walk.time,
+    };
   }
   root.visible = false;
-  function animate(time, dt, { walking, playerX, playerZ, reduced = false }) {
-    const gait = time * 3.7,
-      listen = !walking;
-    torso.position.y = 1.38 + (reduced ? 0 : Math.sin(gait * 2) * 0.018);
-    torso.rotation.z = reduced ? 0 : Math.sin(gait * 0.5) * 0.025;
-    torso.rotation.x = 0.19;
-    const relative =
-      T.MathUtils.euclideanModulo(
-        Math.atan2(playerX - root.position.x, playerZ - root.position.z) -
-          root.rotation.y +
-          Math.PI,
-        Math.PI * 2,
-      ) - Math.PI;
-    const turn = T.MathUtils.clamp(relative, -1.35, 1.35);
-    head.rotation.y = T.MathUtils.damp(
-      head.rotation.y,
-      turn,
-      listen ? 4 : 2,
-      dt,
-    );
-    head.rotation.z = T.MathUtils.damp(
-      head.rotation.z,
-      listen ? 0.42 : 0.11,
-      2,
-      dt,
-    );
-    head.rotation.x = T.MathUtils.damp(
-      head.rotation.x,
-      listen ? 0.13 : -0.06,
-      2,
-      dt,
-    );
-    neck.rotation.z = head.rotation.z * 0.2;
-    for (const l of limbs) {
-      const swing = walking ? Math.sin(gait + l.side * Math.PI * 0.5) : 0;
-      l.hip.rotation.x = swing * 0.35;
-      l.knee.rotation.x = Math.max(0, -swing) * 0.38;
-      l.shoulder.rotation.x = -swing * 0.19 - 0.1;
-      l.shoulder.rotation.z = l.side * (0.055 + (listen ? 0.08 : 0));
-      l.elbow.rotation.x =
-        -0.13 + (reduced ? 0 : Math.sin(gait * 0.7 + l.side) * 0.04);
-    }
-    fingers.forEach(
-      (f, i) =>
-        (f.rotation.x =
-          0.18 + (reduced ? 0 : (Math.sin(time * 0.8 + i * 0.4) + 1) * 0.14)),
-    );
-  }
-  return { root, animate };
+  return { root, animate, mixer };
 }

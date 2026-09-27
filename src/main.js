@@ -1,6 +1,8 @@
 import "./style.css";
 import * as T from "three";
 import { createWorld } from "./world.js";
+import { FLOOR_HEIGHT, groundHeight, onStairs, stairMoveAllowed, stairFloor } from "./stairs.js";
+import { seekerPace } from "./seeker-motion.js";
 import { HouseAudio } from "./audio.js";
 import { createTitleMusic } from "./title-music.js";
 import {
@@ -21,6 +23,7 @@ document.body.classList.toggle("touch-device", touch);
 let world = null,
   state = null,
   modal = false,
+  animateDialogue = false,
   started = false,
   yaw = 0,
   pitch = 0,
@@ -62,9 +65,10 @@ function say(text, seconds = 6, voice = false) {
   subtitleUntil = state.elapsed + seconds;
   if (voice) audio.whisper(text);
 }
-function showModal(kicker, title, body, actions) {
+function showModal(kicker, title, body, actions, keepCharacterAlive = false) {
   renderDirty = true;
   modal = true;
+  animateDialogue = keepCharacterAlive;
   keys.clear();
   resetTouchControls();
   document.exitPointerLock?.();
@@ -84,6 +88,7 @@ function showModal(kicker, title, body, actions) {
 }
 function closeModal() {
   modal = false;
+  animateDialogue = false;
   $("modal").hidden = true;
   keys.clear();
   if (started) {
@@ -177,6 +182,7 @@ $("start").onclick = async () => {
   }
 };
 function reset() {
+  audio.seeker?.silence();
   state = {
     vx: 0,
     vz: 0,
@@ -234,6 +240,18 @@ function reset() {
   world.sister.mesh.visible = false;
   world.fake.active = true;
   world.fake.mesh.visible = true;
+  // Explicit local inspection route; production always uses normal random spawns.
+  const inspectChild = import.meta.env.DEV &&
+    new URLSearchParams(location.search).get("inspectChild") === "kitchen";
+  world.randomizeFakeChild(inspectChild ? () => 0 : undefined);
+  if (inspectChild) {
+    state.x = world.fake.x;
+    state.z = world.fake.z + 1.55;
+    state.floor = world.fake.floor;
+    pitch = -.32;
+    world.camera.position.set(state.x - state.floor * OFFSET, 1.65 + state.floor * FLOOR_HEIGHT, state.z);
+    world.camera.rotation.set(pitch, 0, 0);
+  }
   world.seeker.visible = false;
   document.body.classList.remove("hidden-view", "danger");
   world.flashlight.visible = true;
@@ -281,7 +299,7 @@ function journal() {
   showModal(
     `${state.collected.size} / 5 MEMORIES · ${f ? "UPSTAIRS" : "GROUND FLOOR"}`,
     "What you remember.",
-    `<p>Stairs are at the north end of the central hall. The front door is at the south end, downstairs.</p><div class="floor-map"><span class="${room === rooms[0] ? "current" : ""}">${rooms[0]}</span><span class="hall">NORTH · STAIRS ↑</span><span class="${room === rooms[1] ? "current" : ""}">${rooms[1]}</span><span class="${room === rooms[2] ? "current" : ""}">${rooms[2]}</span><span class="${room === rooms[3] ? "current" : ""}">${rooms[3]}</span></div><p class="mono">YOU ARE IN ${room.toUpperCase()} · DISTRACTIONS ${state.throws} / 3</p>${MEMORIES.map((n) => `<details class="journal-entry"><summary>${state.collected.has(n.id) ? n.name : "Unrecovered memory — " + n.where}</summary><p>${state.collected.has(n.id) ? n.text : "Look for a pale, glowing page on the furniture."}</p></details>`).join("")}<p><em>Yellow pajamas. She wore yellow.</em></p>`,
+    `<p>Walk up or down the stairs at the north end of the central hall. Turn onto the landing at the top. The front door is at the south end, downstairs.</p><div class="floor-map"><span class="${room === rooms[0] ? "current" : ""}">${rooms[0]}</span><span class="hall">NORTH · STAIRS ↑</span><span class="${room === rooms[1] ? "current" : ""}">${rooms[1]}</span><span class="${room === rooms[2] ? "current" : ""}">${rooms[2]}</span><span class="${room === rooms[3] ? "current" : ""}">${rooms[3]}</span></div><p class="mono">YOU ARE IN ${room.toUpperCase()} · DISTRACTIONS ${state.throws} / 3</p>${MEMORIES.map((n) => `<details class="journal-entry"><summary>${state.collected.has(n.id) ? n.name : "Unrecovered memory — " + n.where}</summary><p>${state.collected.has(n.id) ? n.text : "Look for a pale, glowing page on the furniture."}</p></details>`).join("")}<p><em>Yellow pajamas. She wore yellow.</em></p>`,
     [["Back to the house", closeModal]],
   );
 }
@@ -448,19 +466,6 @@ function interact() {
     );
     return;
   }
-  if (i.type === "stairs") {
-    state.floor = 1 - state.floor;
-    state.x = 9 * SIZE + state.floor * OFFSET;
-    state.z = 4.2 * SIZE;
-    yaw = Math.PI;
-    pitch = 0;
-    audio.step();
-    say(
-      state.floor ? "Upstairs. The air is colder here." : "Back downstairs.",
-      3,
-    );
-    return;
-  }
   if (i.type === "memory") {
     const n = MEMORIES.find((n) => n.id === i.id);
     state.collected.add(i.id);
@@ -492,9 +497,9 @@ function interact() {
   }
   if (i.type === "fake") {
     showModal(
-      "THE DINING ROOM",
+      (i.locationName || "THE HOUSE").toUpperCase(),
       "“Don’t let him find me.”",
-      `<p>A little girl waits by the table. She looks like your sister.</p><p>Her pajamas are <em>blue</em>.</p><p>“Jeremy,” she whispers. “Come and hide with me.”</p>`,
+      `<p>A child waits without making a sound. She looks like your sister.</p><p>Her pajamas are <em>blue</em>.</p><p>“Jeremy,” she whispers. “Come and hide with me.”</p>`,
       [
         [
           "Step away",
@@ -517,6 +522,7 @@ function interact() {
           },
         ],
       ],
+      true,
     );
     return;
   }
@@ -614,6 +620,8 @@ function finish(kind, title, body) {
   );
 }
 function canMove(x, z) {
+  if (!stairMoveAllowed(state.x - state.floor * OFFSET, state.z,
+    x - state.floor * OFFSET, z, state.floor)) return false;
   const local = (x - state.floor * OFFSET) / SIZE,
     zz = z / SIZE;
   for (const a of [-0.2, 0.2])
@@ -673,6 +681,7 @@ function updateEnemy(dt) {
   e.repath -= dt;
   e.distracted = Math.max(0, (e.distracted || 0) - dt);
   if (e.floor !== state.floor) {
+    audio.seeker?.silence();
     world.seeker.visible = false;
     e.repath = -1;
     e.floor = state.floor;
@@ -683,6 +692,8 @@ function updateEnemy(dt) {
     return;
   }
   world.seeker.visible = true;
+  const startX = e.x, startZ = e.z;
+  const pace = seekerPace(state.elapsed, reduced);
   const d = Math.hypot(e.x - state.x, e.z - state.z);
   const los = lineClear(e.x, e.z, state.x, state.z);
   const loud = state.noise > 0.5;
@@ -707,7 +718,7 @@ function updateEnemy(dt) {
       dx = p.x - e.x,
       dz = p.z - e.z,
       len = Math.hypot(dx, dz),
-      v = (state.hidden ? 1.5 : 2.8) * dt;
+      v = (state.hidden ? 1.5 : 2.8) * pace * dt;
     if (len < v) {
       e.x = p.x;
       e.z = p.z;
@@ -721,9 +732,9 @@ function updateEnemy(dt) {
         Math.sin(angle - world.seeker.rotation.y),
         Math.cos(angle - world.seeker.rotation.y),
       );
-    world.seeker.rotation.y += delta * (1 - Math.exp(-7 * dt));
-    enemyStep += dt;
-    if (enemyStep > 0.65) {
+    world.seeker.rotation.y += delta * (1 - Math.exp(-(reduced ? 7 : 2.8) * dt));
+    enemyStep += Math.hypot(e.x - startX, e.z - startZ);
+    if (enemyStep > 0.96) {
       enemyStep = 0;
       audio.step(
         true,
@@ -743,21 +754,27 @@ function updateEnemy(dt) {
     }
   }
   world.seeker.position.set(
-    e.x,
-    reduced ? 0 : Math.sin(state.elapsed * 2) * 0.03,
+    e.x - e.floor * OFFSET,
+    groundHeight(e.x, e.z, e.floor),
     e.z,
   );
   world.animateSeeker(state.elapsed, dt, {
     walking: e.path.length > 0 && e.inspect <= 0,
-    playerX: state.x,
+    speed: Math.hypot(e.x - startX, e.z - startZ) / Math.max(dt, 0.001),
+    aware: los && !state.hidden,
+    distance: Math.hypot(e.x - state.x, e.z - state.z),
+    playerY: world.camera.position.y,
+    playerX: state.x - state.floor * OFFSET,
     playerZ: state.z,
     reduced,
   });
+  audio.updateScream(los && !state.hidden && d < 7.5 ? (world.seeker.userData.animation?.scream || 0) : 0,
+    Math.sin(Math.atan2(e.x - state.x, e.z - state.z) + yaw));
   if (!state.hidden && d < 1.05 && los) {
     finish(
       "found",
       "Found you.",
-      "The footsteps stop. There is no scream. Only a voice, impossibly close, saying your name. The house begins to count again.",
+      "Her mouth opens wider than it should. The scream fills the hallway, then stops inches from your face. In the silence, she says your name. The house begins to count again.",
     );
     return;
   }
@@ -857,8 +874,15 @@ function tick(dt) {
         nz = state.z + (state.vz * dt) / steps;
       if (canMove(nx, state.z)) state.x = nx;
       else state.vx = 0;
+      const previousZ = state.z;
       if (canMove(state.x, nz)) state.z = nz;
       else state.vz = 0;
+      const nextFloor = stairFloor(state.x, previousZ, state.z, state.floor);
+      if (nextFloor !== state.floor) {
+        state.x += (nextFloor - state.floor) * OFFSET;
+        state.floor = nextFloor;
+        say(nextFloor ? "Upstairs. The air is colder here." : "Back downstairs.", 3);
+      }
     }
   }
   if (moving) {
@@ -875,7 +899,7 @@ function tick(dt) {
   if (keys.has("ArrowRight")) yaw -= dt * 1.5;
   if (keys.has("ArrowUp")) pitch = Math.min(1.25, pitch + dt);
   if (keys.has("ArrowDown")) pitch = Math.max(-1.25, pitch - dt);
-  const room = roomAt(
+  const room = onStairs(state.x - state.floor * OFFSET, state.z) ? "The staircase" : roomAt(
     (state.x - state.floor * OFFSET) / SIZE,
     state.z / SIZE,
     state.floor,
@@ -892,8 +916,10 @@ function tick(dt) {
     );
     yaw = view.yaw + T.MathUtils.clamp(difference, -view.limit, view.limit);
     pitch = T.MathUtils.clamp(pitch, -0.25, 0.28);
-    cameraTarget.set(view.x, view.y, view.z);
-  } else cameraTarget.set(state.x, state.crouch ? 1.03 : 1.65, state.z);
+    cameraTarget.set(view.x - state.floor * OFFSET,
+      view.y + state.floor * FLOOR_HEIGHT, view.z);
+  } else cameraTarget.set(state.x - state.floor * OFFSET,
+    groundHeight(state.x, state.z, state.floor) + (state.crouch ? 1.03 : 1.65), state.z);
   // Only height and hiding transitions are eased; walking stays responsive.
   const blend = 1 - Math.exp(-dt * (state.hidden ? 7 : 18));
   world.camera.position.lerp(cameraTarget, blend);
@@ -907,7 +933,14 @@ function tick(dt) {
     world.camera.updateProjectionMatrix();
   }
   world.flashlight.visible = state.light;
+  world.animateChildren(state.elapsed, dt, {
+    playerX: state.x - state.floor * OFFSET,
+    playerZ: state.z,
+    playerY: world.camera.position.y,
+    reduced,
+  });
   if (state.phase === "search") updateEnemy(dt);
+  else audio.updateScream(0);
   const flicker =
     !reduced &&
     ((state.phase === "warning" && state.phaseTime > 26) ||
@@ -1010,6 +1043,15 @@ function frame(now) {
       }
       renderStats.textContent = `${Math.round(fps)} FPS · ${Math.round(1000 / fps)} ms · ${world.renderer.getPixelRatio().toFixed(2)}× · 3 lights`;
     }
+  }
+  if (modal && animateDialogue && !state.done) {
+    world.animateChildren(state.elapsed, Math.min(elapsed, 0.05), {
+      playerX: state.x - state.floor * OFFSET,
+      playerZ: state.z,
+      playerY: world.camera.position.y,
+      reduced,
+    });
+    renderDirty = true;
   }
   if (renderDirty) {
     world.updateEnvironment(state.floor, Math.min(elapsed, 0.05));
@@ -1133,6 +1175,7 @@ window.hushSnapshot = () =>
     ? {
         position: [state.x, state.z],
         floor: state.floor,
+        elevation: groundHeight(state.x, state.z, state.floor),
         phase: state.phase,
         remaining: state.phaseTime,
         hidden: state.hidden?.kind || null,

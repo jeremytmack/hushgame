@@ -1,3 +1,4 @@
+import { SeekerVoice } from "./seeker-voice.js";
 export class HouseAudio {
   constructor() {
     this.ctx = null;
@@ -23,6 +24,7 @@ export class HouseAudio {
     g.gain.value = 0.09;
     this.drone.connect(g).connect(this.master);
     this.drone.start();
+    this.seeker = new SeekerVoice(this.ctx, this.master);
   }
   setVolume(v) {
     this.volume = v;
@@ -66,7 +68,11 @@ export class HouseAudio {
     }
     this.tone(120, 1.7, 0.065, Math.random() - 0.5);
   }
+  updateScream(intensity, pan = 0) {
+    this.seeker?.update(intensity, pan);
+  }
   pause() {
+    this.seeker?.silence();
     this.ctx?.suspend();
     if ("speechSynthesis" in window) speechSynthesis.cancel();
   }

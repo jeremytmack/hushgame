@@ -36,7 +36,7 @@ Touch devices have a left movement stick and a right-side drag region for lookin
 
 ## The game
 
-Two floors, eight rooms, five memories. Stairs at the north end of the hall connect the floors using E. The front door is south, downstairs. Pale pages mark memories. The journal gives room locations.
+Two floors, eight rooms, five memories. Walk up the stairs at the north end of the hall to reach the upstairs landing; turn around and walk down to return. No interaction key is needed. The front door is south, downstairs. Pale pages mark memories. The journal gives room locations.
 
 After an exploration interval, the house gives 30 seconds to hide, then searches for approximately 40–50 seconds. The Seeker prioritizes familiar hiding types and frequently visited rooms, hears running, sees exposed players and their lights, and investigates distractions. It can catch you directly or discover you in hiding. Breath control becomes important when it is close. The game has a 15-minute limit; reading and menus pause the clock.
 
@@ -72,9 +72,11 @@ The concept and native 1536×1024 browser screenshot were inspected with `view_i
 
 Walking now uses 4.2 units/second (previously 2.4), sprinting 6.8 (previously 4), and crouching 1.9. Acceleration and stopping use exponential damping, collision movement is subdivided to prevent tunneling, and simulation steps consume elapsed time rather than slowing movement during long frames. Camera entry into hiding is eased. The display renders on every animation frame, without the old 16 ms gate.
 
-Rendering uses two pooled nearby point lights plus the flashlight instead of twenty point lights plus the flashlight. The inactive floor's static geometry is hidden. Lambert materials, a simpler screen overlay, and a lower initial pixel density reduce GPU work. Auto quality adapts pixel density between 0.65 and 1.15; Performance fixes it at 0.8; High allows up to 1.5. F3 displays measured FPS and pixel density. Paused scenes stop continuously rendering.
+Rendering uses two pooled nearby point lights plus the flashlight instead of twenty point lights plus the flashlight. Both floors render around the open stairwell; away from it, the inactive floor's static geometry is hidden. Lambert materials, a simpler screen overlay, and a lower initial pixel density reduce GPU work. Auto quality adapts pixel density between 0.65 and 1.15; Performance fixes it at 0.8; High allows up to 1.5. F3 displays measured FPS and pixel density. Paused scenes stop continuously rendering.
 
 The Seeker has an articulated torso, head, elbows, knees, hands and fingers. Its head tracks the player independently of its walking direction, tilts during listening pauses, and has a generated waxy face, aged skin, ragged dress and sparse hair. This intentionally uses uncanny familiarity and anticipation. The playable model is stylized geometry, not a scan of the cinematic concept. New built-in Image Gen assets: `design/seeker-concept.png` (full body and face design), `public/art/seeker-face.png` (front face material). Prompts specified an almost-human gaunt figure with elongated arms, expressionless asymmetrical lips, recessed eyes, threadbare clothing, and no gore; the production face prompt requested a centered front-view albedo texture with no background or text.
+
+The child encounters use a skinned anatomical mesh (`public/models/child.glb`) authored with MakeHuman's CC0 assets: UV-mapped skin, modeled facial features, independent eyes/eyelids, textured hair, and fitted clothing. Two eight-second skeletal clips animate seated leg swings, hand fidgets, breathing and head turns; runtime gaze follows nearby players. Seated encounters include a chair. The child keeps moving during its encounter dialogue while gameplay timers stay paused. The blue-pajama imitation is placed in one of six room-specific spots at the start of each game and cannot repeat the immediately previous location. Source/license details are in `public/models/NOTICE.md`. The old generated portrait is no longer used by the game. The development-only inspection page at `/tools/child-preview.html` provides seated/standing, profile, close-up, and pause controls; it is not an entry point in the production build. For an in-game encounter check, open `/?inspectChild=kitchen` and enter the house; the inspection override is disabled in production.
 
 The house now contains a sitting-room piano and television, long dining table and chairs, kitchen cabinets/stove/sink/refrigerator and checkerboard floor, study desk, childhood toys, mother's vanity, attic rafters/storage and nursery cot/mobile. Bedrooms have beds; the study has a desk hiding spot. Each hiding object defines an actual interior camera position and constrained view: wardrobe door crack, mattress/bed legs, desk underside, or sofa-edge view. Exit restores the player's previous viewing direction.
 
@@ -86,3 +88,39 @@ Latest checks: about 120 FPS observed in the in-app browser at 856×994 with pix
 Touch input uses independent pointer capture for movement, looking, and held actions. Canceled touches, app switching, menus, and rotation release active controls to prevent stuck movement. Action targets are at least 44 pixels, menus scroll on small screens, and phone layouts keep the controls, breath meter, captions, and journal access separated.
 
 Chromium touch emulation at 390×844 and 844×390 verified simultaneous movement/look/breath control, touch cancellation, crouching, flashlight, distractions, journal, settings, quality selection, and pause. All action buttons fit the landscape viewport; no runtime errors were reported. Screenshots of the title, portrait gameplay, and landscape gameplay were inspected. Production build and four unit tests pass. Physical iOS/Android devices and sustained mobile GPU performance have not been tested.
+
+
+## Publishing
+
+The existing `jeremytmack/hushgame` repository publishes the playable game with
+GitHub Pages. `.github/workflows/pages.yml` runs the tests, builds with the
+`/hushgame/` asset base, and deploys `dist/` whenever `main` is updated. Both
+animated character models and the Seeker scream are included in gameplay;
+development preview pages are not needed to play. To roll back a faulty release,
+revert its commit on `main` and let the same workflow republish.
+
+## Seeker update
+
+The Seeker is now a locally bundled, skinned character with aged, desaturated
+skin, hollow dark eyes, an asymmetric gaunt face, a lengthened neck and fingers,
+and a dark calf-length dress. Its skeleton drives the skin, clothing, hair and
+hands together. The character pauses and surges, places its feet unevenly,
+tracks the player with head turns before its torso follows, and
+holds a long stare punctuated by a delayed blink and small hand movements.
+The average pursuit speed is preserved. Reduced motion disables bursts and
+twitches while retaining walking and tracking. Breathing moves through the
+spine and shoulders, with delayed arm and wrist motion and smoother transitions
+between steps. Within 7.5 metres of a visible player, a locally synthesized
+scream rises in pitch and volume as she approaches. Her jaw opens and stretches
+to reveal teeth and a dark mouth interior. Hiding, breaking sight, or leaving
+range fades the scream; pausing suspends audio and the Sound setting controls
+its volume.
+
+`tools/build-seeker.py` builds `public/models/seeker.glb`; asset provenance is
+in `public/models/NOTICE.md`. During local development, open
+`/tools/seeker-preview.html` to inspect listening/walking, full body, face,
+side view, and reduced motion. “Approach & scream” demonstrates the proximity
+effect; “Enable scream audio” starts its sound after a user gesture. The distance
+slider also allows direct inspection. The preview renders the same model and animation
+code as the game. Unit checks cover clip integrity, movement cadence, reduced
+motion, live skeletal deformation and non-accumulating head rotations.
