@@ -90,15 +90,6 @@ Touch input uses independent pointer capture for movement, looking, and held act
 Chromium touch emulation at 390×844 and 844×390 verified simultaneous movement/look/breath control, touch cancellation, crouching, flashlight, distractions, journal, settings, quality selection, and pause. All action buttons fit the landscape viewport; no runtime errors were reported. Screenshots of the title, portrait gameplay, and landscape gameplay were inspected. Production build and four unit tests pass. Physical iOS/Android devices and sustained mobile GPU performance have not been tested.
 
 
-## Publishing
-
-The existing `jeremytmack/hushgame` repository publishes the playable game with
-GitHub Pages. `.github/workflows/pages.yml` runs the tests, builds with the
-`/hushgame/` asset base, and deploys `dist/` whenever `main` is updated. Both
-animated character models and the Seeker scream are included in gameplay;
-development preview pages are not needed to play. To roll back a faulty release,
-revert its commit on `main` and let the same workflow republish.
-
 ## Seeker update
 
 The Seeker is now a locally bundled, skinned character with aged, desaturated
